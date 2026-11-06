@@ -1,0 +1,56 @@
+{
+  "BlendMode": 0,
+  "ShadingModel": 0,
+  "Textures": {
+    "AORoughnessMetallic": {
+      "ObjectName": "Texture2D'T_K29Arms01_ORM'",
+      "ObjectPath": "/K29/ArtAssets/Textures/Outfit01/T_K29Arms01_ORM.0"
+    },
+    "PM_SpecularMasks": {
+      "ObjectName": "Texture2D'T_K29Arms01_ORM'",
+      "ObjectPath": "/K29/ArtAssets/Textures/Outfit01/T_K29Arms01_ORM.0"
+    },
+    "T_K29Arms01_ORM": {
+      "ObjectName": "Texture2D'T_K29Arms01_ORM'",
+      "ObjectPath": "/K29/ArtAssets/Textures/Outfit01/T_K29Arms01_ORM.0"
+    },
+    "PM_Normals": {
+      "ObjectName": "Texture2D'T_K29Arms01_N'",
+      "ObjectPath": "/K29/ArtAssets/Textures/Outfit01/T_K29Arms01_N.0"
+    },
+    "NormalMap Texture": {
+      "ObjectName": "Texture2D'T_K29Arms01_N'",
+      "ObjectPath": "/K29/ArtAssets/Textures/Outfit01/T_K29Arms01_N.0"
+    },
+    "PM_Diffuse": {
+      "ObjectName": "Texture2D'T_K29Arms01_BC'",
+      "ObjectPath": "/K29/ArtAssets/Textures/Outfit01/T_K29Arms01_BC.0"
+    },
+    "Diffuse": {
+      "ObjectName": "Texture2D'T_K29Arms01_BC'",
+      "ObjectPath": "/K29/ArtAssets/Textures/Outfit01/T_K29Arms01_BC.0"
+    }
+  },
+  "Colors": {},
+  "Scalars": {
+    "PushBack_Strength": -100.0,
+    "RefractionDepthBias": 0.0
+  },
+  "Switches": {},
+  "Properties": {
+    "bHasStaticPermutationResource": true,
+    "BasePropertyOverrides": {
+      "bOverride_ShadingModel": true,
+      "bOverride_TwoSided": true,
+      "TwoSided": true,
+      "OpacityMaskClipValue": 0.3333
+    },
+    "bIncludedInBaseGame": true
+  },
+  "HasTopDiffuse": true,
+  "HasTopNormals": true,
+  "HasTopSpecularMasks": true,
+  "HasTopEmissive": false,
+  "IsTranslucent": false,
+  "IsNull": false
+}
