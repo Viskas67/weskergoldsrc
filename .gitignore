@@ -1,0 +1,9 @@
+# Результаты сборки (SMD/QC/BMP/MDL) — генерируются Tools/goldsrc/build.py
+Build/
+
+# Собранный компилятор studiomdl
+Tools/goldsrc/build/
+
+# Python
+__pycache__/
+*.pyc
