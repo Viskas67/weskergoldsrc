@@ -42,7 +42,8 @@ def read_mdl(path):
         bname = data[off:off + 32].split(b"\x00")[0].decode("latin1")
         parent = struct.unpack_from("<i", data, off + 32)[0]
         value = struct.unpack_from("<6f", data, off + 64)
-        bones.append(dict(name=bname, parent=parent, value=value))
+        scale = struct.unpack_from("<6f", data, off + 88)
+        bones.append(dict(name=bname, parent=parent, value=value, scale=scale))
 
     textures = []
     for i in range(numtextures):
@@ -76,7 +77,7 @@ def read_mdl(path):
     return dict(_data=data, ident=ident, version=version, name=name, length=length, eye=eye,
                 bbox=(bmin, bmax), cbox=(bbmin, bbmax), bones=bones,
                 textures=textures, bodyparts=bodyparts, skulls=(numskinref, numskinfamilies),
-                numseq=numseq, numattachments=numattachments,
+                numseq=numseq, _seqindex=seqindex, numattachments=numattachments,
                 numhitboxes=numhitboxes, size=len(data))
 
 
@@ -219,6 +220,91 @@ def _read_tris(mdl, mesh):
             else:
                 tri = (strip[i], strip[i + 1], strip[i + 2])
             out.append(tri)
+    return out
+
+
+# ---------------------------------------------------------------- sequences
+
+SEQDESC_SIZE = 176
+
+
+def _cstr(b):
+    return b.split(b"\x00")[0].decode("latin1")
+
+
+def read_sequences(mdl):
+    """Читает mstudioseqdesc_t (176 байт) — раскладка из studio.h движка."""
+    data = mdl["_data"]
+    base = mdl["_seqindex"]
+    out = []
+    for i in range(mdl["numseq"]):
+        off = base + i * SEQDESC_SIZE
+        label = _cstr(data[off:off + 32])
+        fps, flags, activity, actweight, numevents, eventindex, numframes, \
+            numpivots, pivotindex = struct.unpack_from("<f 8i", data, off + 32)
+        numblends, animindex = struct.unpack_from("<2i", data, off + 120)
+        out.append(dict(name=label, index=i, fps=fps, flags=flags, loop=bool(flags & 1),
+                        activity=activity, actweight=actweight, numevents=numevents,
+                        eventindex=eventindex, numframes=numframes,
+                        numblends=numblends, animindex=animindex))
+    return out
+
+
+def _anim_channel(data, anim_off, channel, numframes):
+    """Распаковывает RLE-канал (0..5) одной кости -> список значений по кадрам.
+
+    Формат из движка (``S_Studio_AnimValue``): блок из пар shorts; в каждой
+    паре младший байт — ``valid`` (сколько явных значений идёт следом),
+    старший — ``total`` (сколько кадров покрывает блок). Если ``valid < total``,
+    недостающие кадры повторяют последнее явное значение.
+    """
+    off = struct.unpack_from("<H", data, anim_off + channel * 2)[0]
+    if off == 0:
+        return None
+    pos = anim_off + off
+    frames = []
+    guard = 0
+    while len(frames) < numframes and guard < numframes + 4096:
+        guard += 1
+        if pos + 2 > len(data):
+            break
+        valid, total = data[pos], data[pos + 1]
+        pos += 2
+        if total == 0:
+            break
+        block = []
+        for _ in range(valid):
+            block.append(struct.unpack_from("<h", data, pos)[0])
+            pos += 2
+        if not block:
+            break
+        for i in range(total):
+            frames.append(block[i] if i < valid else block[-1])
+    if not frames:
+        return None
+    while len(frames) < numframes:          # на всякий случай добиваем последним
+        frames.append(frames[-1])
+    return frames[:numframes]
+
+
+def sequence_pose(mdl, seq, frame=0, blend=0):
+    """Позиции/углы костей кадра (сырые значения движка, до умножения на scale).
+
+    Возвращает {индекс кости: (px, py, pz, rx, ry, rz)} в «единицах» движка.
+    """
+    data = mdl["_data"]
+    nb = len(mdl["bones"])
+    # animindex — абсолютное смещение от начала файла (WriteAnimations пишет
+    # pData - pStart, а не относительно seqdesc).
+    anim_base = seq["animindex"] + blend * nb * 12
+    out = {}
+    for b in range(nb):
+        off = anim_base + b * 12
+        vals = []
+        for ch in range(6):
+            ch_vals = _anim_channel(data, off, ch, seq["numframes"])
+            vals.append(ch_vals[frame] if ch_vals else 0)
+        out[b] = tuple(vals)
     return out
 
 
