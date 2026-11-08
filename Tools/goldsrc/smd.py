@@ -29,14 +29,21 @@ def dummy_node(count):
 # ------------------------------------------------------------------ SMD
 
 
-def write_reference_smd(path, bones, pos_local, rot_local, chunks, mesh, bone_map):
-    """Пишет reference SMD (меш + скелет) в GoldSrc-пространстве.
+def write_reference_smd(path, bones, pos_local, rot_local, chunks, mesh, bone_map,
+                       weights=None, scale=1.0, origin=(0.0, 0.0, 0.0),
+                       bone_pose=None):
+    """Пишет reference SMD: меш + скелет в позе привязки.
 
-    * ``bones``       — список Bone (индексы .psk);
-    * ``pos_local``   — локальные смещения костей в порядке SMD;
-    * ``rot_local``   — локальные углы (рад) в порядке SMD;
-    * ``chunks``      — пачки треугольников из meshbuild.split_mesh;
-    * ``bone_map``    — индекс .psk -> индекс SMD.
+    * ``bones``     — список ``Bone`` в порядке SMD;
+    * ``pos_local`` — {индекс SMD: (x, y, z)} локальные смещения костей;
+    * ``rot_local`` — {индекс SMD: (pitch, yaw, roll)} в радианах;
+    * ``chunks``    — пачки треугольников из :func:`meshbuild.split_mesh`;
+    * ``bone_map``  — индекс PSK -> индекс SMD;
+    * ``weights``   — {(точка, кость_psk): вес} — для сварки вершин по весам;
+    * ``scale``     — общий масштаб (рост модели приводят к 72 юнитам);
+    * ``origin``    — сдвиг в координатах GoldSrc (центр по вертикали);
+    * ``bone_pose`` — (rot_local, pos_local) из :meth:`anim.Rig.solve` для позы
+      привязки: если задано, скелет пишется как есть, без scale/origin.
     """
     lines = ["version 1", "nodes"]
     for smd_index, bone in enumerate(bones):
@@ -46,102 +53,133 @@ def write_reference_smd(path, bones, pos_local, rot_local, chunks, mesh, bone_ma
     lines.append("end")
     lines.append("skeleton")
     lines.append("time 0")
-    for smd_index in range(len(bones)):
-        p = pos_local[smd_index]
-        r = rot_local[smd_index]
-        # формат SMD: "<индекс кости> px py pz rx ry rz" — без индекса
-        # studiomdl парсит строку sscanf'ом и молча теряет её.
-        lines.append(f"{smd_index:3d} " + " ".join(_fmt(v) for v in (*p, *r)))
+    # Позу привязки лучше брать из того же Rig, что и анимации (build.py
+    # передаёт её в bone_pose) — тогда reference и кадры гарантированно в
+    # одной системе координат. Иначе масштаб/origin легко применить дважды
+    # или не применить вовсе, и скелет «складывается» при проигрывании.
+    if bone_pose is not None:
+        for smd_index in range(len(bones)):
+            pose_local_rot, pose_local_pos = bone_pose
+            p = pose_local_pos[smd_index]
+            r = pose_local_rot[smd_index]
+            lines.append(f"{smd_index:3d} " + " ".join(_fmt(v) for v in (*p, *r)))
+    else:
+        for smd_index in range(len(bones)):
+            p = pos_local[smd_index]
+            r = rot_local[smd_index]
+            shift = origin if bone_map.get(bones[smd_index].parent, -1) < 0 else (0.0, 0.0, 0.0)
+            lines.append(f"{smd_index:3d} " + " ".join(
+                _fmt(v) for v in (*_shift(_scale3(p, scale), shift), *r)))
     lines.append("end")
     lines.append("triangles")
+
+    key_of = {}
+    if weights:
+        for (point, bone), w in weights.items():
+            key_of.setdefault(point, {})[bone] = w
     for chunk in chunks:
         # имя материала в SMD = имя BMP-файла (studiomdl ищет текстуру по нему)
         mat_name = mesh.materials[chunk["material"]] + ".bmp"
         for tri in chunk["tris"]:
             lines.append(mat_name)
             for w in tri:
-                pt = mesh.points[mesh.wedge_point[w]]
+                point = mesh.wedge_point[w]
+                pt = mesh.points[point]
                 nx, ny, nz = (0.0, 0.0, 0.0)
-                if mesh.normals and mesh.wedge_point[w] < len(mesh.normals):
-                    nx, ny, nz = mesh.normals[mesh.wedge_point[w]]
-                x, y, z = pt
-                # Координаты уже в системе SMD: X вбок, Y глубина, Z вверх
-                # (см. to_gold). Поворот лица в +X делает $rotate при компиляции.
-                gx, gy, gz = x, y, z
-                onx, ony, onz = nx, ny, nz
+                if mesh.normals and point < len(mesh.normals):
+                    nx, ny, nz = mesh.normals[point]
                 u, v = mesh.wedge_uv[w]
-                bone = bone_map[_dominant_bone(mesh, mesh.wedge_point[w])]
+                gx, gy, gz = (pt[0] * scale + origin[0], pt[1] * scale + origin[1],
+                              pt[2] * scale + origin[2])
+                # SMD описывает одну вершину одной строкой: кость + 8 чисел.
+                # Мультивес («вес остатка» в 9-м поле) этот форк studiomdl не
+                # читает, поэтому берём доминирующую кость — так же, как это
+                # делали штатные модели GoldSrc.
+                infs = _top_weights(key_of.get(point), bone_map, limit=1)
                 lines.append(
-                    f"{bone} {_fmt(gx)} {_fmt(gy)} {_fmt(gz)} "
-                    f"{_fmt(onx)} {_fmt(ony)} {_fmt(onz)} {_fmt(u)} {_fmt(1.0 - v)}"
-                )
+                    f"{infs[0][0]} {_fmt(gx)} {_fmt(gy)} {_fmt(gz)} "
+                    f"{_fmt(nx)} {_fmt(ny)} {_fmt(nz)} {_fmt(u)} {_fmt(1.0 - v)}")
     lines.append("end")
     with open(path, "w", encoding="utf-8") as fh:
         fh.write("\n".join(lines) + "\n")
 
 
-_DOM_CACHE = {}
+def _scale3(p, s):
+    return (p[0] * s, p[1] * s, p[2] * s)
 
 
-def _dominant_bone(mesh, point):
-    key = id(mesh)
-    cache = _DOM_CACHE.get(key)
-    if cache is None:
-        acc = {}
-        for w, pt, bone in mesh.weights:
-            if w <= 0:
-                continue
-            acc.setdefault(pt, {})
-            acc[pt][bone] = acc[pt].get(bone, 0.0) + w
-        cache = {p: max(d.items(), key=lambda kv: kv[1])[0] for p, d in acc.items()}
-        _DOM_CACHE[key] = cache
-    return cache[point]
+def _shift(p, origin):
+    return (p[0] + origin[0], p[1] + origin[1], p[2] + origin[2])
 
 
-def dominant_map(mesh):
-    acc = {}
-    for w, pt, bone in mesh.weights:
-        if w <= 0:
-            continue
-        acc.setdefault(pt, {})
-        acc[pt][bone] = acc[pt].get(bone, 0.0) + w
-    return {p: max(d.items(), key=lambda kv: kv[1])[0] for p, d in acc.items()}
+def _top_weights(weights, bone_map, limit=3):
+    """До 3 влияний точки -> [(индекс SMD, вес)]. Первое — всегда 1.0.
+
+    Формат SMD: у вершины первая строка задаёт кость с неявным весом 1.0,
+    следующие (необязательные) — вес ОСТАТКА. Движок нормирует: при весах
+    (1.0, w2) реальная доля второй кости = w2 / (1 + w2). Поэтому веса
+    пересчитываем так, чтобы доли совпали с исходными из PSK.
+    """
+    if not weights:
+        return [(-1, 1.0)]
+    pairs = sorted(((b, w) for b, w in weights.items() if b in bone_map),
+                   key=lambda bw: -bw[1])[:limit]
+    if not pairs:
+        return [(-1, 1.0)]
+    total = sum(w for _, w in pairs) or 1.0
+    share = [w / total for _, w in pairs]
+    # первая кость = 1.0, остальные — их доля ОТ первой (движок нормирует)
+    out = [(bone_map[pairs[0][0]], 1.0)]
+    for k in range(1, len(pairs)):
+        if share[k] >= 0.02:
+            out.append((bone_map[pairs[k][0]], share[k] / share[0]))
+    return out
 
 
 # ------------------------------------------------------------------- QC
 
 
 TEMPLATE = """// ---------------------------------------------------------------------------
-// QC-скрипт для {name}
+// QC-скрипт модели игрока CS 1.6: {name}
 // Сгенерирован Tools/goldsrc/build.py — править лучше генератор, а не этот файл.
 //
-// Скелет: {bones} костей (исходный риг Unreal, 529 костей, обрезан до весов)
-// Геометрия: {tris} треугольников, {verts} уникальных позиций, без decimation
+// Скелет: {bones} костей (риг Unreal K29, обрезан до нагруженных весов)
+// Геометрия: {tris} треугольников, {verts} уникальных позиций
+// Анимации: {sequences} последовательностей в порядке CS 1.6 (см. anim.py)
 // ---------------------------------------------------------------------------
 
 $modelname "{modelname}"
 $cd "{cd}"
 $cdtexture "{cdtexture}"
 
-// Оси: PSK (UE) -> GoldSrc. Поворот уже применён к вершинам и костям,
-// поэтому studiomdl не должен крутить модель сам (по умолчанию +90).
 $scale 1.0
 $cliptotextures
 
+// Ось модели. В SMD лицо смотрит в -Y, Z — вверх; движок ждёт, что персонаж
+// смотрит в +X, поэтому studiomdl крутит модель на +90° сам (значение по
+// умолчанию). Дополнительный поворот не задаём: $rotate 0 сломал бы это.
+$origin 0 0 {origin_z}
+
+// Игровой bbox: 32x32 в основании, рост 72 юнита, центр по вертикали в
+// середине коробки (движок ставит модель origin'ом в центр игрока).
 $bbox {bbox}
 $cbox {cbox}
-
-$eyeposition 0 0 {eye}
+$eyeposition {eye}
 
 // --- текстуры --------------------------------------------------------------
 {textures}
 // --- меш -------------------------------------------------------------------
 {body}
-// --- привязка --------------------------------------------------------------
+// --- кости для анимации (верхняя часть скелета) -----------------------------
+{controllers}
+// --- привязки (оружие в руках) ---------------------------------------------
 {attachments}
-// --- поза (пока без анимаций: один кадр-референс) ---------------------------
-{sequence}
+// --- хитбоксы (группы попаданий CS 1.6) ------------------------------------
+{hitboxes}
+// --- 111 последовательностей в порядке движка -------------------------------
+{sequences_qc}
 """
+
 
 
 def write_qc(path, ctx):
@@ -152,22 +190,3 @@ def write_qc(path, ctx):
         fh.write(text)
 
 
-def write_single_frame_sequence(path, nodes, bone_names, pos_local, rot_local, bone_map):
-    """Однокадровая sequence.smd (нужна studiomdl для $sequence)."""
-    lines = ["version 1", "nodes"]
-    for smd_index, bone in enumerate(bone_names):
-        parent = -1 if bone.parent < 0 else bone_map[bone.parent]
-        lines.append(f'{smd_index:3d} "{bone.name}" {parent}')
-    lines.append("end")
-    lines.append("skeleton")
-    lines.append("time 0")
-    for smd_index in range(len(bone_names)):
-        lines.append(" ".join(_fmt(v) for v in (*pos_local[smd_index], *rot_local[smd_index])))
-    lines.append("end")
-    with open(path, "w", encoding="utf-8") as fh:
-        fh.write("\n".join(lines) + "\n")
-
-
-def bone_rpy_degrees(rot_local, index):
-    """Локальные углы SMD (уже в радианах)."""
-    return tuple(rot_local[index])
