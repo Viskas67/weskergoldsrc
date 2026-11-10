@@ -120,3 +120,11 @@ python3 Tools/goldsrc/verify_retopo.py --tris 2500
 * **studiomdl**: форк требует патчей под x86_64 (см. `build_studiomdl.sh`) —
   32-битный `ALIGN` в `write.c`, `EXTERN`-дубли в `studiomdl.h`, двойной `free`
   в `scriplib.c`, индекс кости в строках `skeleton`.
+
+## Выдача кастомной пушки (AMX Mod X)
+
+`Tools/amxx/pushka_give.sma` — плагин-выдавальщик для кастомной «пушки»,
+которая живёт в отдельном плагине: команды `amx_pushka` и `say /pushka`
+(ник, `#userid`, `@all`, `@t`, `@ct`), три способа выдачи
+(`callfunc` функции плагина → `give_item` → спавн на землю) и настройка
+через `amx_cvar`. Подробности — в `Tools/amxx/README.md`.
